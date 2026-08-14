@@ -18,31 +18,67 @@ class CrossEncoderReranker:
         results: list[dict],
         top_k: int = 5
     ) -> list[dict]:
-        """
-        Rerank retrieved chunks based on query-document relevance.
-        """
 
         if not results:
             return []
 
+        # -------------------------------------------------
+        # Prepare query-document pairs
+        # -------------------------------------------------
+
         pairs = [
-            [query, result["chunk"]["text"]]
+            [
+                query,
+                result["chunk"]["text"]
+            ]
             for result in results
         ]
 
-        scores = self.model.predict(pairs)
+        # -------------------------------------------------
+        # Cross-encoder scores
+        # -------------------------------------------------
+
+        scores = self.model.predict(
+            pairs
+        )
 
         reranked = []
 
-        for result, score in zip(results, scores):
+        for result, score in zip(
+            results,
+            scores
+        ):
+
             reranked.append({
                 "chunk": result["chunk"],
-                "score": float(score)
+
+                # Original hybrid score
+                "retrieval_score": result["score"],
+
+                # Cross-encoder score
+                "rerank_score": float(score)
             })
 
+        # -------------------------------------------------
+        # Sort using cross-encoder relevance
+        # -------------------------------------------------
+
         reranked.sort(
-            key=lambda result: result["score"],
+            key=lambda result: result["rerank_score"],
             reverse=True
         )
 
-        return reranked[:top_k]
+        # -------------------------------------------------
+        # Return final top-k
+        # -------------------------------------------------
+
+        final_results = []
+
+        for result in reranked[:top_k]:
+
+            final_results.append({
+                "chunk": result["chunk"],
+                "score": result["rerank_score"]
+            })
+
+        return final_results

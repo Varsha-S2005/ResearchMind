@@ -85,3 +85,41 @@ class ChromaStore:
             query_embeddings=[query_embedding],
             n_results=top_k
         )
+
+    def list_documents(self) -> list[dict]:
+        """
+        Return a list of unique documents stored in ChromaDB.
+        """
+
+        if self.collection.count() == 0:
+            return []
+
+        results = self.collection.get(
+            include=["metadatas"]
+        )
+
+        metadatas = results.get(
+            "metadatas",
+            []
+        )
+
+        documents = {}
+
+        for metadata in metadatas:
+
+            document_id = metadata.get(
+                "document_id"
+            )
+
+            if not document_id:
+                continue
+
+            if document_id not in documents:
+                documents[document_id] = {
+                    "document_id": document_id,
+                    "chunk_count": 0
+                }
+
+            documents[document_id]["chunk_count"] += 1
+
+        return list(documents.values())

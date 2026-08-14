@@ -18,16 +18,9 @@ class HybridRetriever:
         self,
         query: str,
         top_k: int = 5,
-        retrieval_k: int = 10,
+        retrieval_k: int = 20,
         rrf_k: int = 60
     ) -> list[dict]:
-        """
-        Perform hybrid retrieval using:
-
-        1. BM25 lexical retrieval
-        2. Dense vector retrieval
-        3. Reciprocal Rank Fusion
-        """
 
         # -------------------------------------------------
         # 1. BM25 retrieval
@@ -50,14 +43,14 @@ class HybridRetriever:
         )
 
         # -------------------------------------------------
-        # 3. Store RRF scores
+        # 3. Prepare RRF data
         # -------------------------------------------------
 
         fused_scores = {}
         chunk_data = {}
 
         # -------------------------------------------------
-        # BM25 results
+        # 4. Add BM25 results
         # -------------------------------------------------
 
         for rank, result in enumerate(
@@ -74,15 +67,17 @@ class HybridRetriever:
                 f"{document_id}_chunk_{chunk_id}"
             )
 
+            rrf_score = 1 / (rrf_k + rank)
+
             fused_scores[unique_id] = (
                 fused_scores.get(unique_id, 0)
-                + 1 / (rrf_k + rank)
+                + rrf_score
             )
 
             chunk_data[unique_id] = chunk
 
         # -------------------------------------------------
-        # Dense results
+        # 5. Add dense results
         # -------------------------------------------------
 
         documents = dense_results.get(
@@ -92,11 +87,6 @@ class HybridRetriever:
 
         metadatas = dense_results.get(
             "metadatas",
-            [[]]
-        )
-
-        distances = dense_results.get(
-            "distances",
             [[]]
         )
 
@@ -112,12 +102,6 @@ class HybridRetriever:
             else []
         )
 
-        dense_distances = (
-            distances[0]
-            if distances
-            else []
-        )
-
         for rank, metadata in enumerate(
             dense_metadatas,
             start=1
@@ -130,18 +114,18 @@ class HybridRetriever:
                 f"{document_id}_chunk_{chunk_id}"
             )
 
+            rrf_score = 1 / (rrf_k + rank)
+
             fused_scores[unique_id] = (
                 fused_scores.get(unique_id, 0)
-                + 1 / (rrf_k + rank)
+                + rrf_score
             )
 
+            # If BM25 did not retrieve this chunk,
+            # construct the chunk from dense metadata.
             if unique_id not in chunk_data:
 
                 document_index = rank - 1
-
-                document_text = dense_documents[
-                    document_index
-                ]
 
                 chunk_data[unique_id] = {
                     "document_id": document_id,
@@ -149,11 +133,13 @@ class HybridRetriever:
                     "page_number": metadata[
                         "page_number"
                     ],
-                    "text": document_text
+                    "text": dense_documents[
+                        document_index
+                    ]
                 }
 
         # -------------------------------------------------
-        # 4. Sort by RRF score
+        # 6. Sort using RRF score
         # -------------------------------------------------
 
         ranked_chunks = sorted(
@@ -163,7 +149,7 @@ class HybridRetriever:
         )
 
         # -------------------------------------------------
-        # 5. Return top results
+        # 7. Return top-k
         # -------------------------------------------------
 
         results = []
@@ -172,7 +158,7 @@ class HybridRetriever:
 
             results.append({
                 "chunk": chunk_data[unique_id],
-                "score": score
+                "score": float(score)
             })
 
         return results

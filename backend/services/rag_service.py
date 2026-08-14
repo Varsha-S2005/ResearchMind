@@ -36,13 +36,11 @@ class RAGService:
 
         self.llm = GeminiLLM()
 
-        self.chunks = []
-
         # -------------------------------------------------
-        # Load initial document
+        # Load existing chunks from ChromaDB
         # -------------------------------------------------
 
-        self._load_initial_document()
+        self.chunks = self._load_existing_chunks()
 
         # -------------------------------------------------
         # Build retrieval + RAG pipeline
@@ -51,41 +49,52 @@ class RAGService:
         self._build_pipeline()
 
     # =====================================================
-    # INITIAL DOCUMENT
+    # LOAD EXISTING CHUNKS
     # =====================================================
 
-    def _load_initial_document(self):
+    def _load_existing_chunks(self) -> list[dict]:
+        """
+        Load existing document chunks from ChromaDB.
 
-        pdf_path = "data/papers/sample.pdf"
+        This allows the application to restart without
+        re-processing all PDFs.
+        """
 
-        document_id = Path(pdf_path).stem
+        if self.vector_store.collection.count() == 0:
+            return []
 
-        pages = extract_text_from_pdf(
-            pdf_path,
-            document_id=document_id
+        results = self.vector_store.collection.get(
+            include=[
+                "documents",
+                "metadatas"
+            ]
         )
 
-        self.chunks = chunk_pages(
-            pages,
-            chunk_size=500,
-            overlap=50
+        documents = results.get(
+            "documents",
+            []
         )
 
-        # -------------------------------------------------
-        # Add initial document to ChromaDB
-        # -------------------------------------------------
-
-        embeddings = [
-            self.embedder.embed_text(
-                chunk["text"]
-            )
-            for chunk in self.chunks
-        ]
-
-        self.vector_store.add_chunks(
-            self.chunks,
-            embeddings
+        metadatas = results.get(
+            "metadatas",
+            []
         )
+
+        chunks = []
+
+        for text, metadata in zip(
+            documents,
+            metadatas
+        ):
+
+            chunks.append({
+                "document_id": metadata["document_id"],
+                "page_number": metadata["page_number"],
+                "chunk_id": metadata["chunk_id"],
+                "text": text
+            })
+
+        return chunks
 
     # =====================================================
     # BUILD PIPELINE
@@ -118,6 +127,24 @@ class RAGService:
         question: str,
         top_k: int = 5
     ) -> dict:
+        """
+        Ask a research question using the RAG pipeline.
+        """
+
+        if not question.strip():
+            raise ValueError(
+                "Question cannot be empty."
+            )
+
+        if not self.chunks:
+            return {
+                "question": question,
+                "answer": (
+                    "No research documents are currently "
+                    "available. Please upload a PDF first."
+                ),
+                "sources": []
+            }
 
         return self.pipeline.answer(
             question,
@@ -135,21 +162,7 @@ class RAGService:
     ) -> int:
         """
         Ingest a new PDF into the RAG system.
-
-        Args:
-            pdf_path:
-                Path to the uploaded PDF.
-
-            filename:
-                Original uploaded filename.
-
-        Returns:
-            Number of chunks added.
         """
-
-        # -------------------------------------------------
-        # Create stable document ID
-        # -------------------------------------------------
 
         document_id = Path(filename).stem
 
@@ -162,6 +175,11 @@ class RAGService:
             document_id=document_id
         )
 
+        if not pages:
+            raise ValueError(
+                "No text could be extracted from the PDF."
+            )
+
         # -------------------------------------------------
         # Create chunks
         # -------------------------------------------------
@@ -171,6 +189,11 @@ class RAGService:
             chunk_size=500,
             overlap=50
         )
+
+        if not chunks:
+            raise ValueError(
+                "No chunks were generated from the PDF."
+            )
 
         # -------------------------------------------------
         # Generate embeddings
@@ -193,7 +216,7 @@ class RAGService:
         )
 
         # -------------------------------------------------
-        # Add to BM25 corpus
+        # Update in-memory BM25 corpus
         # -------------------------------------------------
 
         self.chunks.extend(chunks)
@@ -205,3 +228,14 @@ class RAGService:
         self._build_pipeline()
 
         return len(chunks)
+
+    # =====================================================
+    # LIST DOCUMENTS
+    # =====================================================
+
+    def list_documents(self) -> list[dict]:
+        """
+        Return all documents currently stored in ChromaDB.
+        """
+
+        return self.vector_store.list_documents()
