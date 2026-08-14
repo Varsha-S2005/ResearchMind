@@ -15,51 +15,55 @@ from backend.rag.rag_pipeline import RAGPipeline
 
 class RAGService:
     """
-    Initializes and provides access to the ResearchMind RAG pipeline.
+    Manages the ResearchMind RAG pipeline.
     """
 
     def __init__(self):
-        # 1. Load research document
+
+        self.embedder = Embedder()
+
+        self.vector_store = ChromaStore(
+            persist_directory="data/chroma"
+        )
+
+        self.reranker = CrossEncoderReranker()
+
+        self.llm = GeminiLLM()
+
+        self.chunks = []
+
+        self._load_initial_document()
+
+        self._build_pipeline()
+
+    def _load_initial_document(self):
+
         pdf_path = "data/papers/sample.pdf"
 
         pages = extract_text_from_pdf(pdf_path)
 
-        # 2. Create chunks
-        chunks = chunk_pages(
+        self.chunks = chunk_pages(
             pages,
             chunk_size=500,
             overlap=50
         )
 
-        # 3. Initialize embedding model
-        embedder = Embedder()
+    def _build_pipeline(self):
 
-        # 4. Initialize vector store
-        vector_store = ChromaStore(
-            persist_directory="data/chroma"
+        self.bm25_retriever = BM25Retriever(
+            self.chunks
         )
 
-        # 5. Initialize BM25
-        bm25_retriever = BM25Retriever(chunks)
-
-        # 6. Initialize hybrid retriever
-        retriever = HybridRetriever(
-            bm25_retriever=bm25_retriever,
-            vector_store=vector_store,
-            embedder=embedder
+        self.retriever = HybridRetriever(
+            bm25_retriever=self.bm25_retriever,
+            vector_store=self.vector_store,
+            embedder=self.embedder
         )
 
-        # 7. Initialize reranker
-        reranker = CrossEncoderReranker()
-
-        # 8. Initialize Gemini
-        llm = GeminiLLM()
-
-        # 9. Create RAG pipeline
         self.pipeline = RAGPipeline(
-            retriever=retriever,
-            reranker=reranker,
-            llm=llm
+            retriever=self.retriever,
+            reranker=self.reranker,
+            llm=self.llm
         )
 
     def ask(
@@ -67,11 +71,39 @@ class RAGService:
         question: str,
         top_k: int = 5
     ) -> dict:
-        """
-        Ask a question using the ResearchMind RAG pipeline.
-        """
 
         return self.pipeline.answer(
             question,
             top_k=top_k
         )
+
+    def ingest_pdf(
+        self,
+        pdf_path: str
+    ) -> int:
+
+        pages = extract_text_from_pdf(pdf_path)
+
+        chunks = chunk_pages(
+            pages,
+            chunk_size=500,
+            overlap=50
+        )
+
+        embeddings = [
+            self.embedder.embed_text(
+                chunk["text"]
+            )
+            for chunk in chunks
+        ]
+
+        self.vector_store.add_chunks(
+            chunks,
+            embeddings
+        )
+
+        self.chunks.extend(chunks)
+
+        self._build_pipeline()
+
+        return len(chunks)
