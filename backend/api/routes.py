@@ -1,5 +1,7 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
+import os
+import shutil
 
 from backend.services.rag_service import RAGService
 
@@ -16,9 +18,6 @@ class AskRequest(BaseModel):
 
 @router.get("/status")
 def status():
-    """
-    Check the status of the ResearchMind service.
-    """
     return {
         "status": "running",
         "service": "ResearchMind"
@@ -27,9 +26,6 @@ def status():
 
 @router.post("/ask")
 def ask(request: AskRequest):
-    """
-    Ask a research question using the RAG pipeline.
-    """
 
     result = rag_service.ask(
         question=request.question,
@@ -37,3 +33,43 @@ def ask(request: AskRequest):
     )
 
     return result
+
+
+@router.post("/upload")
+def upload_pdf(file: UploadFile = File(...)):
+    """
+    Upload a research paper and add it to the RAG system.
+    """
+
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are supported."
+        )
+
+    os.makedirs(
+        "data/uploads",
+        exist_ok=True
+    )
+
+    file_path = os.path.join(
+        "data/uploads",
+        file.filename
+    )
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(
+            file.file,
+            buffer
+        )
+
+    chunk_count = rag_service.ingest_pdf(
+        file_path,
+	file.filename
+    )
+
+    return {
+        "message": "PDF uploaded successfully",
+        "filename": file.filename,
+        "chunks_added": chunk_count
+    }
