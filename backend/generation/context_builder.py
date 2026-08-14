@@ -22,6 +22,8 @@ class ContextBuilder:
 
             context_parts.append(
                 f"[Source {index}]\n"
+                f"Document: {chunk['filename']}\n"
+                f"Document ID: {chunk['document_id']}\n"
                 f"Page: {chunk['page_number']}\n"
                 f"Chunk ID: {chunk['chunk_id']}\n"
                 f"Text:\n"

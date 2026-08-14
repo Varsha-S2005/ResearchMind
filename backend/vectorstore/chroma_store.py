@@ -34,7 +34,7 @@ class ChromaStore:
             )
 
         ids = [
-            f"chunk_{chunk['chunk_id']}"
+            f"{chunk['document_id']}_chunk_{chunk['chunk_id']}"
             for chunk in chunks
         ]
 
@@ -45,6 +45,8 @@ class ChromaStore:
 
         metadatas = [
             {
+                "document_id": chunk["document_id"],
+                "filename": chunk["filename"],
                 "page_number": chunk["page_number"],
                 "chunk_id": chunk["chunk_id"]
             }

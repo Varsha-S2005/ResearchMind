@@ -41,41 +41,83 @@ class HybridRetriever:
         fused_scores = {}
         chunk_data = {}
 
-        # BM25 ranking
-        for rank, result in enumerate(bm25_results, start=1):
-            chunk_id = result["chunk"]["chunk_id"]
-
-            fused_scores[chunk_id] = (
-                fused_scores.get(chunk_id, 0)
-                + 1 / (rrf_k + rank)
-            )
-
-            chunk_data[chunk_id] = result["chunk"]
-
-        # Dense ranking
-        for rank, (document, metadata) in enumerate(
-            zip(
-                dense_results["documents"][0],
-                dense_results["metadatas"][0]
-            ),
+        # -------------------------
+        # 4. BM25 ranking
+        # -------------------------
+        for rank, result in enumerate(
+            bm25_results,
             start=1
         ):
-            chunk_id = metadata["chunk_id"]
+            chunk = result["chunk"]
 
-            fused_scores[chunk_id] = (
-                fused_scores.get(chunk_id, 0)
+            document_id = chunk.get(
+                "document_id",
+                "default_document"
+            )
+
+            chunk_id = chunk["chunk_id"]
+
+            result_id = f"{document_id}_chunk_{chunk_id}"
+
+            fused_scores[result_id] = (
+                fused_scores.get(result_id, 0)
                 + 1 / (rrf_k + rank)
             )
 
-            if chunk_id not in chunk_data:
-                chunk_data[chunk_id] = {
+            chunk_data[result_id] = {
+                **chunk,
+                "document_id": document_id,
+                "filename": chunk.get(
+                    "filename",
+                    "unknown.pdf"
+                )
+            }
+
+        # -------------------------
+        # 5. Dense ranking
+        # -------------------------
+        documents = dense_results.get(
+            "documents",
+            [[]]
+        )[0]
+
+        metadatas = dense_results.get(
+            "metadatas",
+            [[]]
+        )[0]
+
+        for rank, (document, metadata) in enumerate(
+            zip(documents, metadatas),
+            start=1
+        ):
+            document_id = metadata.get(
+                "document_id",
+                "default_document"
+            )
+
+            chunk_id = metadata["chunk_id"]
+
+            result_id = f"{document_id}_chunk_{chunk_id}"
+
+            fused_scores[result_id] = (
+                fused_scores.get(result_id, 0)
+                + 1 / (rrf_k + rank)
+            )
+
+            if result_id not in chunk_data:
+                chunk_data[result_id] = {
+                    "document_id": document_id,
+                    "filename": metadata.get(
+                        "filename",
+                        "unknown.pdf"
+                    ),
                     "chunk_id": chunk_id,
                     "page_number": metadata["page_number"],
                     "text": document
                 }
 
         # -------------------------
-        # 4. Sort by fused score
+        # 6. Sort by RRF score
         # -------------------------
         ranked_chunks = sorted(
             fused_scores.items(),
@@ -84,13 +126,13 @@ class HybridRetriever:
         )
 
         # -------------------------
-        # 5. Return top results
+        # 7. Return top results
         # -------------------------
         results = []
 
-        for chunk_id, score in ranked_chunks[:top_k]:
+        for result_id, score in ranked_chunks[:top_k]:
             results.append({
-                "chunk": chunk_data[chunk_id],
+                "chunk": chunk_data[result_id],
                 "score": score
             })
 
