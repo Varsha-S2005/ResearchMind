@@ -45,7 +45,8 @@ class ChromaStore:
 
         metadatas = [
             {
-                "page_number": chunk["page_number"]
+                "page_number": chunk["page_number"],
+                "chunk_id": chunk["chunk_id"]
             }
             for chunk in chunks
         ]

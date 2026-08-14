@@ -1,10 +1,16 @@
 from fastapi import FastAPI
 
+from backend.api.routes import router
+
+
 app = FastAPI(
     title="ResearchMind API",
     description="RAG system for scientific research papers",
     version="0.1.0"
 )
+
+
+app.include_router(router)
 
 
 @app.get("/")
@@ -19,3 +25,4 @@ def health():
     return {
         "status": "healthy"
     }
+
