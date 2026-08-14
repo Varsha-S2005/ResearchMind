@@ -73,3 +73,14 @@ def upload_pdf(file: UploadFile = File(...)):
         "filename": file.filename,
         "chunks_added": chunk_count
     }
+@router.get("/documents")
+def list_documents():
+    """
+    Return all documents currently stored in ChromaDB.
+    """
+
+    documents = rag_service.list_documents()
+
+    return {
+        "documents": documents
+    }

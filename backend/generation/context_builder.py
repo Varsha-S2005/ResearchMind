@@ -1,6 +1,7 @@
 class ContextBuilder:
     """
-    Builds structured context from reranked document chunks.
+    Builds the context that will be provided to the LLM
+    from retrieved and reranked chunks.
     """
 
     def build(
@@ -8,26 +9,53 @@ class ContextBuilder:
         results: list[dict]
     ) -> str:
         """
-        Convert reranked chunks into a structured context string.
+        Build a formatted research context from
+        retrieved chunks.
         """
-
-        if not results:
-            return "No relevant research context was found."
 
         context_parts = []
 
-        for index, result in enumerate(results, start=1):
+        for index, result in enumerate(
+            results,
+            start=1
+        ):
 
             chunk = result["chunk"]
 
-            context_parts.append(
-                f"[Source {index}]\n"
-                f"Document: {chunk['filename']}\n"
-                f"Document ID: {chunk['document_id']}\n"
-                f"Page: {chunk['page_number']}\n"
-                f"Chunk ID: {chunk['chunk_id']}\n"
-                f"Text:\n"
-                f"{chunk['text']}\n"
+            document_id = chunk.get(
+                "document_id",
+                "Unknown document"
             )
 
-        return "\n".join(context_parts)
+            page_number = chunk.get(
+                "page_number",
+                "Unknown"
+            )
+
+            chunk_id = chunk.get(
+                "chunk_id",
+                "Unknown"
+            )
+
+            score = result.get(
+                "score",
+                0
+            )
+
+            text = chunk.get(
+                "text",
+                ""
+            )
+
+            context_parts.append(
+                f"Source {index}\n"
+                f"Document: {document_id}\n"
+                f"Page: {page_number}\n"
+                f"Chunk ID: {chunk_id}\n"
+                f"Score: {score}\n"
+                f"Content:\n{text}"
+            )
+
+        return "\n\n".join(
+            context_parts
+        )

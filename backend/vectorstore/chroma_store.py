@@ -3,7 +3,8 @@ import chromadb
 
 class ChromaStore:
     """
-    Handles storing and searching document embeddings using ChromaDB.
+    Handles storing and searching document embeddings
+    using ChromaDB.
     """
 
     def __init__(
@@ -24,46 +25,33 @@ class ChromaStore:
         chunks: list[dict],
         embeddings: list[list[float]]
     ) -> None:
+        """
+        Store chunks, embeddings and metadata in ChromaDB.
+        """
 
         if len(chunks) != len(embeddings):
             raise ValueError(
                 "Number of chunks must match number of embeddings"
             )
 
-        ids = []
+        ids = [
+            f"{chunk['document_id']}_chunk_{chunk['chunk_id']}"
+            for chunk in chunks
+        ]
 
-        documents = []
+        documents = [
+            chunk["text"]
+            for chunk in chunks
+        ]
 
-        metadatas = []
-
-        for chunk in chunks:
-
-            document_id = chunk.get(
-                "document_id",
-                "default_document"
-            )
-
-            chunk_id = chunk["chunk_id"]
-
-            unique_id = (
-                f"{document_id}_chunk_{chunk_id}"
-            )
-
-            ids.append(unique_id)
-
-            documents.append(
-                chunk["text"]
-            )
-
-            metadatas.append({
-                "document_id": document_id,
-                "filename": chunk.get(
-                    "filename",
-                    "unknown.pdf"
-                ),
+        metadatas = [
+            {
+                "document_id": chunk["document_id"],
                 "page_number": chunk["page_number"],
-                "chunk_id": chunk_id
-            })
+                "chunk_id": chunk["chunk_id"]
+            }
+            for chunk in chunks
+        ]
 
         self.collection.upsert(
             ids=ids,
@@ -77,6 +65,21 @@ class ChromaStore:
         query_embedding: list[float],
         top_k: int = 5
     ) -> dict:
+        """
+        Search for the most similar chunks.
+        """
+
+        if self.collection.count() == 0:
+            return {
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]]
+            }
+
+        top_k = min(
+            top_k,
+            self.collection.count()
+        )
 
         return self.collection.query(
             query_embeddings=[query_embedding],

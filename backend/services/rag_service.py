@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 from backend.ingestion.pdf_parser import extract_text_from_pdf
 from backend.chunking.text_chunker import chunk_pages
@@ -22,6 +22,10 @@ class RAGService:
 
     def __init__(self):
 
+        # -------------------------------------------------
+        # Initialize models and vector store
+        # -------------------------------------------------
+
         self.embedder = Embedder()
 
         self.vector_store = ChromaStore(
@@ -34,30 +38,58 @@ class RAGService:
 
         self.chunks = []
 
+        # -------------------------------------------------
+        # Load initial document
+        # -------------------------------------------------
+
         self._load_initial_document()
 
+        # -------------------------------------------------
+        # Build retrieval + RAG pipeline
+        # -------------------------------------------------
+
         self._build_pipeline()
+
+    # =====================================================
+    # INITIAL DOCUMENT
+    # =====================================================
 
     def _load_initial_document(self):
 
         pdf_path = "data/papers/sample.pdf"
 
-        if not os.path.exists(pdf_path):
-            return
+        document_id = Path(pdf_path).stem
 
-        pages = extract_text_from_pdf(pdf_path)
+        pages = extract_text_from_pdf(
+            pdf_path,
+            document_id=document_id
+        )
 
-        chunks = chunk_pages(
+        self.chunks = chunk_pages(
             pages,
             chunk_size=500,
             overlap=50
         )
 
-        for chunk in chunks:
-            chunk["document_id"] = "sample_document"
-            chunk["filename"] = "sample.pdf"
+        # -------------------------------------------------
+        # Add initial document to ChromaDB
+        # -------------------------------------------------
 
-        self.chunks.extend(chunks)
+        embeddings = [
+            self.embedder.embed_text(
+                chunk["text"]
+            )
+            for chunk in self.chunks
+        ]
+
+        self.vector_store.add_chunks(
+            self.chunks,
+            embeddings
+        )
+
+    # =====================================================
+    # BUILD PIPELINE
+    # =====================================================
 
     def _build_pipeline(self):
 
@@ -77,6 +109,10 @@ class RAGService:
             llm=self.llm
         )
 
+    # =====================================================
+    # ASK QUESTION
+    # =====================================================
+
     def ask(
         self,
         question: str,
@@ -88,15 +124,47 @@ class RAGService:
             top_k=top_k
         )
 
+    # =====================================================
+    # INGEST PDF
+    # =====================================================
+
     def ingest_pdf(
         self,
         pdf_path: str,
         filename: str
     ) -> int:
+        """
+        Ingest a new PDF into the RAG system.
+
+        Args:
+            pdf_path:
+                Path to the uploaded PDF.
+
+            filename:
+                Original uploaded filename.
+
+        Returns:
+            Number of chunks added.
+        """
+
+        # -------------------------------------------------
+        # Create stable document ID
+        # -------------------------------------------------
+
+        document_id = Path(filename).stem
+
+        # -------------------------------------------------
+        # Extract PDF text
+        # -------------------------------------------------
 
         pages = extract_text_from_pdf(
-            pdf_path
+            pdf_path,
+            document_id=document_id
         )
+
+        # -------------------------------------------------
+        # Create chunks
+        # -------------------------------------------------
 
         chunks = chunk_pages(
             pages,
@@ -104,29 +172,35 @@ class RAGService:
             overlap=50
         )
 
-        document_id = os.path.splitext(
-            filename
-        )[0]
+        # -------------------------------------------------
+        # Generate embeddings
+        # -------------------------------------------------
 
-        for chunk in chunks:
-            chunk["document_id"] = document_id
-            chunk["filename"] = filename
-
-        embeddings = []
-
-        for chunk in chunks:
-            embedding = self.embedder.embed_text(
+        embeddings = [
+            self.embedder.embed_text(
                 chunk["text"]
             )
+            for chunk in chunks
+        ]
 
-            embeddings.append(embedding)
+        # -------------------------------------------------
+        # Store in ChromaDB
+        # -------------------------------------------------
 
         self.vector_store.add_chunks(
             chunks,
             embeddings
         )
 
+        # -------------------------------------------------
+        # Add to BM25 corpus
+        # -------------------------------------------------
+
         self.chunks.extend(chunks)
+
+        # -------------------------------------------------
+        # Rebuild retrieval pipeline
+        # -------------------------------------------------
 
         self._build_pipeline()
 

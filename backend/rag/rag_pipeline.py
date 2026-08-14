@@ -30,36 +30,54 @@ class RAGPipeline:
         Generate a grounded answer for a user question.
         """
 
+        # -------------------------------------------------
         # 1. Hybrid retrieval
+        # -------------------------------------------------
+
         retrieved_results = self.retriever.search(
             question,
             top_k=top_k
         )
 
+        # -------------------------------------------------
         # 2. Cross-encoder reranking
+        # -------------------------------------------------
+
         reranked_results = self.reranker.rerank(
             question,
             retrieved_results,
             top_k=top_k
         )
 
+        # -------------------------------------------------
         # 3. Build research context
+        # -------------------------------------------------
+
         context = self.context_builder.build(
             reranked_results
         )
 
-        # 4. Build prompt
+        # -------------------------------------------------
+        # 4. Build grounded prompt
+        # -------------------------------------------------
+
         prompt = self.prompt_builder.build(
             question=question,
             context=context
         )
 
+        # -------------------------------------------------
         # 5. Generate answer
+        # -------------------------------------------------
+
         answer = self.llm.generate(
             prompt
         )
 
+        # -------------------------------------------------
         # 6. Build structured source information
+        # -------------------------------------------------
+
         sources = []
 
         for result in reranked_results:
@@ -68,10 +86,15 @@ class RAGPipeline:
 
             sources.append({
                 "source_id": f"Source {len(sources) + 1}",
+                "document_id": chunk["document_id"],
                 "page_number": chunk["page_number"],
                 "chunk_id": chunk["chunk_id"],
                 "score": result["score"]
             })
+
+        # -------------------------------------------------
+        # 7. Return final result
+        # -------------------------------------------------
 
         return {
             "question": question,
