@@ -1,7 +1,12 @@
 class HybridRetriever:
     """
-    Combines BM25 and dense retrieval using
-    Reciprocal Rank Fusion (RRF).
+    Hybrid retrieval using:
+    1. BM25 keyword retrieval
+    2. Dense semantic retrieval
+    3. Weighted Reciprocal Rank Fusion (RRF)
+
+    Dense retrieval is given slightly higher weight because
+    ResearchMind is primarily used for semantic research questions.
     """
 
     def __init__(
@@ -18,40 +23,52 @@ class HybridRetriever:
         self,
         query: str,
         top_k: int = 5,
-        retrieval_k: int = 20,
+        retrieval_k: int = 40,
         rrf_k: int = 60
     ) -> list[dict]:
 
-        # -------------------------------------------------
-        # 1. BM25 retrieval
-        # -------------------------------------------------
+        # =====================================================
+        # 1. BM25 RETRIEVAL
+        # =====================================================
 
         bm25_results = self.bm25_retriever.search(
             query,
             top_k=retrieval_k
         )
 
-        # -------------------------------------------------
-        # 2. Dense retrieval
-        # -------------------------------------------------
+        # =====================================================
+        # 2. DENSE RETRIEVAL
+        # =====================================================
 
-        query_embedding = self.embedder.embed_text(query)
+        query_embedding = self.embedder.embed_text(
+            query
+        )
 
         dense_results = self.vector_store.search(
             query_embedding,
             top_k=retrieval_k
         )
 
-        # -------------------------------------------------
-        # 3. Prepare RRF data
-        # -------------------------------------------------
+        # =====================================================
+        # 3. STORAGE FOR FUSION
+        # =====================================================
 
         fused_scores = {}
         chunk_data = {}
 
-        # -------------------------------------------------
-        # 4. Add BM25 results
-        # -------------------------------------------------
+        # -----------------------------------------------------
+        # Weights
+        #
+        # Dense retrieval gets slightly higher weight because
+        # semantic similarity is important for research queries.
+        # -----------------------------------------------------
+
+        BM25_WEIGHT = 0.4
+        DENSE_WEIGHT = 0.6
+
+        # =====================================================
+        # 4. ADD BM25 RESULTS
+        # =====================================================
 
         for rank, result in enumerate(
             bm25_results,
@@ -67,18 +84,23 @@ class HybridRetriever:
                 f"{document_id}_chunk_{chunk_id}"
             )
 
-            rrf_score = 1 / (rrf_k + rank)
+            rrf_score = (
+                BM25_WEIGHT
+                /
+                (rrf_k + rank)
+            )
 
             fused_scores[unique_id] = (
-                fused_scores.get(unique_id, 0)
-                + rrf_score
+                fused_scores.get(unique_id, 0.0)
+                +
+                rrf_score
             )
 
             chunk_data[unique_id] = chunk
 
-        # -------------------------------------------------
-        # 5. Add dense results
-        # -------------------------------------------------
+        # =====================================================
+        # 5. ADD DENSE RESULTS
+        # =====================================================
 
         documents = dense_results.get(
             "documents",
@@ -114,33 +136,45 @@ class HybridRetriever:
                 f"{document_id}_chunk_{chunk_id}"
             )
 
-            rrf_score = 1 / (rrf_k + rank)
-
-            fused_scores[unique_id] = (
-                fused_scores.get(unique_id, 0)
-                + rrf_score
+            rrf_score = (
+                DENSE_WEIGHT
+                /
+                (rrf_k + rank)
             )
 
-            # If BM25 did not retrieve this chunk,
-            # construct the chunk from dense metadata.
+            fused_scores[unique_id] = (
+                fused_scores.get(unique_id, 0.0)
+                +
+                rrf_score
+            )
+
+            # -------------------------------------------------
+            # If BM25 did not retrieve this chunk, reconstruct
+            # it from ChromaDB metadata and document text.
+            # -------------------------------------------------
+
             if unique_id not in chunk_data:
 
                 document_index = rank - 1
 
-                chunk_data[unique_id] = {
-                    "document_id": document_id,
-                    "chunk_id": chunk_id,
-                    "page_number": metadata[
-                        "page_number"
-                    ],
-                    "text": dense_documents[
-                        document_index
-                    ]
-                }
+                if document_index < len(
+                    dense_documents
+                ):
 
-        # -------------------------------------------------
-        # 6. Sort using RRF score
-        # -------------------------------------------------
+                    chunk_data[unique_id] = {
+                        "document_id": document_id,
+                        "chunk_id": chunk_id,
+                        "page_number": metadata[
+                            "page_number"
+                        ],
+                        "text": dense_documents[
+                            document_index
+                        ]
+                    }
+
+        # =====================================================
+        # 6. SORT FUSED RESULTS
+        # =====================================================
 
         ranked_chunks = sorted(
             fused_scores.items(),
@@ -148,9 +182,9 @@ class HybridRetriever:
             reverse=True
         )
 
-        # -------------------------------------------------
-        # 7. Return top-k
-        # -------------------------------------------------
+        # =====================================================
+        # 7. RETURN TOP-K
+        # =====================================================
 
         results = []
 
