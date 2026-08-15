@@ -1,3 +1,9 @@
+import sys
+
+sys.stdout.reconfigure(
+    encoding="utf-8"
+)
+
 from pathlib import Path
 
 from backend.ingestion.pdf_parser import extract_text_from_pdf
@@ -21,17 +27,16 @@ from tests.evaluation.evaluation_dataset import get_evaluation_dataset
 PDF_PATH = "data/papers/sample.pdf"
 
 TOP_K = 5
-RETRIEVAL_K = 20
+
+# Number of candidates retrieved before reranking
+RETRIEVAL_K = 40
+
+
 # ============================================================
-# RELEVANCE CHECK
+# RELEVANCE
 # ============================================================
 
 def is_relevant(result, evaluation_item):
-    """
-    A retrieved chunk is relevant when:
-    - document_id matches
-    - chunk_id appears in relevant_chunks
-    """
 
     chunk = result["chunk"]
 
@@ -48,33 +53,43 @@ def is_relevant(result, evaluation_item):
         []
     )
 
-    if document_id not in relevant_documents:
-        return False
-
-    if chunk_id not in relevant_chunks:
-        return False
-
-    return True
+    return (
+        document_id in relevant_documents
+        and chunk_id in relevant_chunks
+    )
 
 
 # ============================================================
-# METRIC CALCULATION
+# GET RELEVANT RANKS
+# ============================================================
+
+def get_relevant_ranks(
+    results,
+    evaluation_item
+):
+
+    ranks = []
+
+    for rank, result in enumerate(
+        results,
+        start=1
+    ):
+
+        if is_relevant(
+            result,
+            evaluation_item
+        ):
+
+            ranks.append(rank)
+
+    return ranks
+
+
+# ============================================================
+# METRICS
 # ============================================================
 
 def calculate_metrics(results, evaluation_item):
-    """
-    Calculate:
-
-    Recall@1
-    Recall@3
-    Recall@5
-
-    Precision@1
-    Precision@3
-    Precision@5
-
-    MRR
-    """
 
     relevant_chunks = evaluation_item.get(
         "relevant_chunks",
@@ -84,6 +99,7 @@ def calculate_metrics(results, evaluation_item):
     relevant_count = len(relevant_chunks)
 
     if relevant_count == 0:
+
         return {
             "recall@1": 0.0,
             "recall@3": 0.0,
@@ -94,20 +110,13 @@ def calculate_metrics(results, evaluation_item):
             "mrr": 0.0
         }
 
-    relevance = []
-
-    for result in results:
-
-        relevance.append(
-            is_relevant(
-                result,
-                evaluation_item
-            )
+    relevance = [
+        is_relevant(
+            result,
+            evaluation_item
         )
-
-    # --------------------------------------------------------
-    # Recall
-    # --------------------------------------------------------
+        for result in results
+    ]
 
     def recall_at_k(k):
 
@@ -120,10 +129,6 @@ def calculate_metrics(results, evaluation_item):
             1.0
         )
 
-    # --------------------------------------------------------
-    # Precision
-    # --------------------------------------------------------
-
     def precision_at_k(k):
 
         retrieved_relevant = sum(
@@ -131,10 +136,6 @@ def calculate_metrics(results, evaluation_item):
         )
 
         return retrieved_relevant / k
-
-    # --------------------------------------------------------
-    # MRR
-    # --------------------------------------------------------
 
     reciprocal_rank = 0.0
 
@@ -163,12 +164,60 @@ def calculate_metrics(results, evaluation_item):
 
 
 # ============================================================
+# CANDIDATE RECALL
+# ============================================================
+
+def calculate_candidate_recall(
+    results,
+    evaluation_item
+):
+
+    relevant_chunks = set(
+        evaluation_item.get(
+            "relevant_chunks",
+            []
+        )
+    )
+
+    if not relevant_chunks:
+
+        return 0.0
+
+    retrieved_chunks = set()
+
+    for result in results:
+
+        chunk = result["chunk"]
+
+        if chunk.get("document_id") in evaluation_item.get(
+            "relevant_documents",
+            []
+        ):
+
+            retrieved_chunks.add(
+                chunk.get("chunk_id")
+            )
+
+    found = len(
+        relevant_chunks.intersection(
+            retrieved_chunks
+        )
+    )
+
+    return min(
+        found / len(relevant_chunks),
+        1.0
+    )
+
+
+# ============================================================
 # AVERAGE METRICS
 # ============================================================
 
 def average_metrics(all_metrics):
 
     if not all_metrics:
+
         return {}
 
     metric_names = [
@@ -181,19 +230,13 @@ def average_metrics(all_metrics):
         "mrr"
     ]
 
-    averages = {}
-
-    for metric in metric_names:
-
-        averages[metric] = (
-            sum(
-                item[metric]
-                for item in all_metrics
-            )
-            / len(all_metrics)
-        )
-
-    return averages
+    return {
+        metric: sum(
+            item[metric]
+            for item in all_metrics
+        ) / len(all_metrics)
+        for metric in metric_names
+    }
 
 
 # ============================================================
@@ -243,18 +286,199 @@ def print_metrics(metrics):
 
 
 # ============================================================
+# BASIC RANKING DIAGNOSTIC
+# ============================================================
+
+def print_ranking_diagnostic(
+    hybrid_top5,
+    reranked_results,
+    evaluation_item
+):
+
+    hybrid_ranks = get_relevant_ranks(
+        hybrid_top5,
+        evaluation_item
+    )
+
+    reranked_ranks = get_relevant_ranks(
+        reranked_results,
+        evaluation_item
+    )
+
+    print()
+    print("RANKING DIAGNOSTIC")
+    print("-" * 30)
+
+    print(
+        f"Hybrid relevant ranks   : "
+        f"{hybrid_ranks}"
+    )
+
+    print(
+        f"Reranked relevant ranks : "
+        f"{reranked_ranks}"
+    )
+
+
+# ============================================================
+# DETAILED RERANKING DIAGNOSTIC
+# ============================================================
+
+def print_reranking_diagnostic(
+    question,
+    relevant_chunks,
+    hybrid_results,
+    reranked_results
+):
+    print()
+    print("=" * 70)
+    print("DETAILED RERANKING DIAGNOSTIC")
+    print("=" * 70)
+
+    print()
+    print(f"Question: {question}")
+    print()
+    print(
+        f"Relevant chunks: "
+        f"{relevant_chunks}"
+    )
+
+    # --------------------------------------------------------
+    # HYBRID CANDIDATES
+    # --------------------------------------------------------
+
+    print()
+    print("HYBRID CANDIDATES")
+    print("-" * 70)
+
+    for rank, result in enumerate(
+        hybrid_results,
+        start=1
+    ):
+        chunk = result.get(
+            "chunk",
+            {}
+        )
+
+        chunk_id = chunk.get(
+            "chunk_id",
+            chunk.get("id", "?")
+        )
+
+        page = chunk.get(
+            "page",
+            None
+        )
+
+        score = float(
+            result.get(
+                "score",
+                0.0
+            )
+        )
+
+        marker = (
+            " <-- RELEVANT"
+            if chunk_id in relevant_chunks
+            else ""
+        )
+
+        print(
+            f"{rank:2}. "
+            f"chunk={str(chunk_id):>3} "
+            f"page={str(page):<3} "
+            f"score={score:.6f}"
+            f"{marker}"
+        )
+
+    # --------------------------------------------------------
+    # RERANKED TOP-5
+    # --------------------------------------------------------
+
+    print()
+    print("RERANKED TOP-5")
+    print("-" * 70)
+
+    for rank, result in enumerate(
+        reranked_results,
+        start=1
+    ):
+        chunk = result.get(
+            "chunk",
+            {}
+        )
+
+        chunk_id = chunk.get(
+            "chunk_id",
+            chunk.get("id", "?")
+        )
+
+        page = chunk.get(
+            "page",
+            None
+        )
+
+        cross_score = float(
+            result.get(
+                "rerank_score",
+                0.0
+            )
+        )
+
+        final_score = float(
+            result.get(
+                "score",
+                0.0
+            )
+        )
+
+        hybrid_score = float(
+            result.get(
+                "retrieval_score",
+                0.0
+            )
+        )
+
+        marker = (
+            " <-- RELEVANT"
+            if chunk_id in relevant_chunks
+            else ""
+        )
+
+        print(
+            f"{rank:2}. "
+            f"chunk={str(chunk_id):>3} "
+            f"page={str(page):<3} "
+            f"cross={cross_score:.6f} "
+            f"hybrid={hybrid_score:.6f} "
+            f"final={final_score:.6f}"
+            f"{marker}"
+        )
+
+        text_preview = chunk.get(
+            "text",
+            ""
+        ).replace(
+            "\n",
+            " "
+        )[:180]
+
+        print(
+            f"    Text: {text_preview}"
+        )
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
 def main():
 
     print("=" * 70)
-    print("ResearchMind Retrieval + Reranking Evaluation")
+    print(
+        "ResearchMind Retrieval + Reranking Evaluation"
+    )
     print("=" * 70)
-
-    # --------------------------------------------------------
-    # Load evaluation dataset
-    # --------------------------------------------------------
 
     evaluation_dataset = get_evaluation_dataset()
 
@@ -264,22 +488,21 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Load PDF
+    # LOAD PDF
     # --------------------------------------------------------
 
-    pdf_path = Path(PDF_PATH)
+    pdf_path = Path(
+        PDF_PATH
+    )
 
     if not pdf_path.exists():
 
         print(
-            f"\nERROR: PDF not found: {PDF_PATH}"
+            f"ERROR: PDF not found: "
+            f"{PDF_PATH}"
         )
 
         return
-
-    print(
-        f"\nLoading document: {PDF_PATH}"
-    )
 
     document_id = pdf_path.stem
 
@@ -303,58 +526,35 @@ def main():
     )
 
     # --------------------------------------------------------
-    # Initialize embedding model
+    # MODELS
     # --------------------------------------------------------
 
     embedder = Embedder()
-
-    # --------------------------------------------------------
-    # Initialize ChromaDB
-    # --------------------------------------------------------
 
     vector_store = ChromaStore(
         persist_directory="data/chroma"
     )
 
-    # --------------------------------------------------------
-    # Generate embeddings
-    # --------------------------------------------------------
-
     print()
-    print("Generating embeddings...")
+    print(
+        "Generating embeddings..."
+    )
 
-    embeddings = []
-
-    for chunk in chunks:
-
-        embedding = embedder.embed_text(
+    embeddings = [
+        embedder.embed_text(
             chunk["text"]
         )
-
-        embeddings.append(
-            embedding
-        )
-
-    # --------------------------------------------------------
-    # Store chunks
-    # --------------------------------------------------------
+        for chunk in chunks
+    ]
 
     vector_store.add_chunks(
         chunks,
         embeddings
     )
 
-    # --------------------------------------------------------
-    # Initialize BM25
-    # --------------------------------------------------------
-
     bm25_retriever = BM25Retriever(
         chunks
     )
-
-    # --------------------------------------------------------
-    # Initialize Hybrid Retriever
-    # --------------------------------------------------------
 
     hybrid_retriever = HybridRetriever(
         bm25_retriever=bm25_retriever,
@@ -362,22 +562,20 @@ def main():
         embedder=embedder
     )
 
-    # --------------------------------------------------------
-    # Initialize Cross Encoder
-    # --------------------------------------------------------
-
     reranker = CrossEncoderReranker()
 
     # --------------------------------------------------------
-    # Store metrics
+    # METRICS STORAGE
     # --------------------------------------------------------
 
     hybrid_metrics_all = []
 
     reranked_metrics_all = []
 
+    candidate_recalls = []
+
     # ========================================================
-    # EVALUATE QUESTIONS
+    # QUESTIONS
     # ========================================================
 
     for question_number, evaluation_item in enumerate(
@@ -385,7 +583,9 @@ def main():
         start=1
     ):
 
-        question = evaluation_item["question"]
+        question = evaluation_item[
+            "question"
+        ]
 
         print()
         print("=" * 70)
@@ -395,146 +595,131 @@ def main():
             f"{question}"
         )
 
-        print()
-
-        print(
-            f"Relevant document(s): "
-            f"{evaluation_item.get('relevant_documents', [])}"
-        )
-
-        print(
-            f"Relevant chunk(s): "
-            f"{evaluation_item.get('relevant_chunks', [])}"
-        )
-
         # ====================================================
-        # HYBRID RETRIEVAL
+        # RETRIEVE 40 CANDIDATES
         # ====================================================
 
-        hybrid_results = hybrid_retriever.search(
+        candidate_results = hybrid_retriever.search(
             question,
-            top_k=TOP_K,
+            top_k=RETRIEVAL_K,
             retrieval_k=RETRIEVAL_K
         )
 
-        hybrid_result_metrics = calculate_metrics(
-            hybrid_results,
+        # ====================================================
+        # CANDIDATE RECALL
+        # ====================================================
+
+        candidate_recall = calculate_candidate_recall(
+            candidate_results,
+            evaluation_item
+        )
+
+        candidate_recalls.append(
+            candidate_recall
+        )
+
+        # ====================================================
+        # HYBRID TOP-5
+        # ====================================================
+
+        hybrid_top5 = candidate_results[
+            :TOP_K
+        ]
+
+        hybrid_metrics = calculate_metrics(
+            hybrid_top5,
             evaluation_item
         )
 
         hybrid_metrics_all.append(
-            hybrid_result_metrics
+            hybrid_metrics
         )
 
         # ====================================================
-        # CROSS ENCODER RERANKING
+        # RERANK 40 -> 5
         # ====================================================
 
         reranked_results = reranker.rerank(
             question,
-            hybrid_results,
+            candidate_results,
             top_k=TOP_K
         )
 
-        reranked_result_metrics = calculate_metrics(
+        reranked_metrics = calculate_metrics(
             reranked_results,
             evaluation_item
         )
 
         reranked_metrics_all.append(
-            reranked_result_metrics
+            reranked_metrics
         )
 
         # ====================================================
-        # HYBRID RESULTS
+        # BASIC DIAGNOSTIC
         # ====================================================
 
-        print()
-        print("HYBRID RETRIEVAL")
-        print("-" * 30)
-
-        print_metrics(
-            hybrid_result_metrics
-        )
-
-        # ====================================================
-        # RERANKED RESULTS
-        # ====================================================
-
-        print()
-        print("AFTER CROSS-ENCODER RERANKING")
-        print("-" * 30)
-
-        print_metrics(
-            reranked_result_metrics
-        )
-
-        # ====================================================
-        # SHOW HYBRID CHUNKS
-        # ====================================================
-
-        print()
-        print("Retrieved chunks:")
-
-        for rank, result in enumerate(
-            hybrid_results,
-            start=1
-        ):
-
-            chunk = result["chunk"]
-
-            relevant_marker = ""
-
-            if is_relevant(
-                result,
-                evaluation_item
-            ):
-
-                relevant_marker = " <-- RELEVANT"
-
-            print(
-                f"  {rank}. "
-                f"Document={chunk.get('document_id')} "
-                f"Page={chunk.get('page_number')} "
-                f"Chunk={chunk.get('chunk_id')} "
-                f"Score={result.get('score', 0):.4f}"
-                f"{relevant_marker}"
-            )
-
-        # ====================================================
-        # SHOW RERANKED CHUNKS
-        # ====================================================
-
-        print()
-        print("Reranked chunks:")
-
-        for rank, result in enumerate(
+        print_ranking_diagnostic(
+            hybrid_top5,
             reranked_results,
-            start=1
-        ):
+            evaluation_item
+        )
 
-            chunk = result["chunk"]
+        # ====================================================
+        # DETAILED DIAGNOSTIC
+        # ONLY FOR QUESTION 3
+        # ====================================================
 
-            relevant_marker = ""
+        if question_number == 3:
 
-            if is_relevant(
-                result,
-                evaluation_item
-            ):
-
-                relevant_marker = " <-- RELEVANT"
-
-            print(
-                f"  {rank}. "
-                f"Document={chunk.get('document_id')} "
-                f"Page={chunk.get('page_number')} "
-                f"Chunk={chunk.get('chunk_id')} "
-                f"Score={result.get('score', 0):.4f}"
-                f"{relevant_marker}"
+            print_reranking_diagnostic(
+                question,
+                evaluation_item,
+                candidate_results,
+                reranked_results
             )
+
+        # ====================================================
+        # DISPLAY
+        # ====================================================
+
+        print()
+
+        print(
+            f"Candidate Recall@"
+            f"{RETRIEVAL_K}: "
+            f"{candidate_recall:.4f}"
+        )
+
+        print()
+
+        print(
+            "HYBRID TOP-5"
+        )
+
+        print(
+            "-" * 30
+        )
+
+        print_metrics(
+            hybrid_metrics
+        )
+
+        print()
+
+        print(
+            "RERANKED TOP-5"
+        )
+
+        print(
+            "-" * 30
+        )
+
+        print_metrics(
+            reranked_metrics
+        )
 
     # ========================================================
-    # FINAL RESULTS
+    # FINAL METRICS
     # ========================================================
 
     hybrid_final = average_metrics(
@@ -545,30 +730,64 @@ def main():
         reranked_metrics_all
     )
 
+    average_candidate_recall = (
+        sum(candidate_recalls)
+        /
+        len(candidate_recalls)
+    )
+
+    # ========================================================
+    # FINAL OUTPUT
+    # ========================================================
+
     print()
     print("=" * 70)
-    print("FINAL RETRIEVAL RESULTS")
+
+    print(
+        "FINAL RETRIEVAL RESULTS"
+    )
+
     print("=" * 70)
 
-    # --------------------------------------------------------
-    # Hybrid
-    # --------------------------------------------------------
-
     print()
-    print("HYBRID RETRIEVAL")
-    print("-" * 30)
+
+    print(
+        "HYBRID TOP-5"
+    )
+
+    print(
+        "-" * 30
+    )
 
     print_metrics(
         hybrid_final
     )
 
-    # --------------------------------------------------------
-    # Reranked
-    # --------------------------------------------------------
+    print()
+
+    print(
+        f"HYBRID CANDIDATE RECALL@"
+        f"{RETRIEVAL_K}"
+    )
+
+    print(
+        "-" * 30
+    )
+
+    print(
+        f"Candidate Recall: "
+        f"{average_candidate_recall:.4f}"
+    )
 
     print()
-    print("AFTER CROSS-ENCODER RERANKING")
-    print("-" * 30)
+
+    print(
+        "AFTER CROSS-ENCODER RERANKING"
+    )
+
+    print(
+        "-" * 30
+    )
 
     print_metrics(
         reranked_final
@@ -580,7 +799,11 @@ def main():
 
     print()
     print("=" * 70)
-    print("RERANKING IMPROVEMENT")
+
+    print(
+        "RERANKING IMPROVEMENT"
+    )
+
     print("=" * 70)
 
     metrics_to_compare = [
@@ -595,11 +818,17 @@ def main():
 
     for metric in metrics_to_compare:
 
-        before = hybrid_final[metric]
+        before = hybrid_final[
+            metric
+        ]
 
-        after = reranked_final[metric]
+        after = reranked_final[
+            metric
+        ]
 
-        improvement = after - before
+        improvement = (
+            after - before
+        )
 
         print(
             f"{metric:<15}: "
@@ -614,65 +843,74 @@ def main():
 
     print()
     print("=" * 70)
-    print("INTERPRETATION")
+
+    print(
+        "INTERPRETATION"
+    )
+
     print("=" * 70)
 
-    if reranked_final["mrr"] > hybrid_final["mrr"]:
+    if average_candidate_recall >= 0.80:
 
         print(
-            "Cross-encoder reranking improved "
-            "the overall ranking quality."
+            f"Candidate retrieval reached "
+            f"the 80% target: "
+            f"{average_candidate_recall:.2%}"
         )
 
-    elif reranked_final["mrr"] < hybrid_final["mrr"]:
-
         print(
-            "Cross-encoder reranking reduced "
-            "the overall ranking quality."
+            "Next focus: cross-encoder reranking."
         )
 
     else:
 
         print(
-            "Cross-encoder reranking did not "
-            "change the overall MRR."
+            f"Candidate retrieval is below "
+            f"the 80% target: "
+            f"{average_candidate_recall:.2%}"
+        )
+
+        print(
+            "Next focus: improve hybrid retrieval."
         )
 
     if (
-        reranked_final["recall@1"]
+        reranked_final["mrr"]
         >
-        hybrid_final["recall@1"]
+        hybrid_final["mrr"]
     ):
 
         print(
-            "Reranking improved Recall@1."
+            "Cross-encoder improved ranking quality."
         )
 
     elif (
-        reranked_final["recall@1"]
+        reranked_final["mrr"]
         <
-        hybrid_final["recall@1"]
+        hybrid_final["mrr"]
     ):
 
         print(
-            "Reranking reduced Recall@1."
+            "Cross-encoder reduced ranking quality."
         )
 
     else:
 
         print(
-            "Reranking did not change Recall@1."
+            "Cross-encoder did not change MRR."
         )
 
     print()
-    print("=" * 70)
-    print("Evaluation completed.")
+
     print("=" * 70)
 
+    print(
+        "Evaluation completed."
+    )
 
-# ============================================================
-# ENTRY POINT
-# ============================================================
+    print("=" * 70)
+
 
 if __name__ == "__main__":
+
     main()
