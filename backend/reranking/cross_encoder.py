@@ -19,7 +19,7 @@ class CrossEncoderReranker:
         self,
         model_name: str = "BAAI/bge-reranker-base",
         rrf_k: int = 60,
-        rerank_k: int = 10
+        rerank_k: int = 40
     ):
         self.model = CrossEncoder(model_name)
 
