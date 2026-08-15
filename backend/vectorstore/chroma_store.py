@@ -47,6 +47,7 @@ class ChromaStore:
         metadatas = [
             {
                 "document_id": chunk["document_id"],
+                "filename": chunk.get("filename", ""),
                 "page_number": chunk["page_number"],
                 "chunk_id": chunk["chunk_id"]
             }
@@ -117,6 +118,10 @@ class ChromaStore:
             if document_id not in documents:
                 documents[document_id] = {
                     "document_id": document_id,
+                    "filename": metadata.get(
+                        "filename",
+                        ""
+                    ),
                     "chunk_count": 0
                 }
 

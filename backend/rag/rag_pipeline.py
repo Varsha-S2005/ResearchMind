@@ -6,17 +6,26 @@ class RAGPipeline:
     """
     Coordinates retrieval, reranking, context construction,
     prompt construction, and LLM generation.
+
+    Retrieval and final answer size are intentionally separated:
+
+        Hybrid retrieval -> 40 candidates
+        Cross-encoder reranking -> rank candidates
+        Final top-k -> context + LLM
     """
 
     def __init__(
         self,
         retriever,
         reranker,
-        llm
+        llm,
+        retrieval_k: int = 40
     ):
         self.retriever = retriever
         self.reranker = reranker
         self.llm = llm
+
+        self.retrieval_k = retrieval_k
 
         self.context_builder = ContextBuilder()
         self.prompt_builder = PromptBuilder()
@@ -27,7 +36,15 @@ class RAGPipeline:
         top_k: int = 5
     ) -> dict:
         """
-        Generate a grounded answer for a user question.
+        Generate a grounded answer.
+
+        Pipeline:
+
+        1. Retrieve a larger candidate pool.
+        2. Rerank the candidates.
+        3. Keep only the final top_k results.
+        4. Build context.
+        5. Generate answer.
         """
 
         # -------------------------------------------------
@@ -36,7 +53,7 @@ class RAGPipeline:
 
         retrieved_results = self.retriever.search(
             question,
-            top_k=top_k
+            top_k=self.retrieval_k
         )
 
         # -------------------------------------------------
@@ -75,7 +92,7 @@ class RAGPipeline:
         )
 
         # -------------------------------------------------
-        # 6. Build structured source information
+        # 6. Build source information
         # -------------------------------------------------
 
         sources = []
@@ -89,7 +106,7 @@ class RAGPipeline:
                 "document_id": chunk["document_id"],
                 "page_number": chunk["page_number"],
                 "chunk_id": chunk["chunk_id"],
-                "score": result["score"]
+                "score": result.get("score", 0)
             })
 
         # -------------------------------------------------
