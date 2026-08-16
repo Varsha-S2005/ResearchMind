@@ -73,6 +73,8 @@ def main():
     valid_answers = 0
     cited_answers = 0
     valid_citations = 0
+    rate_limited = 0
+    generation_errors = 0
 
     for question_number, evaluation_item in enumerate(
         evaluation_dataset,
@@ -181,10 +183,27 @@ def main():
 
         except Exception as error:
 
+            error_message = str(error)
+
             print()
             print("GENERATION ERROR")
             print("-" * 70)
             print(error)
+
+            if (
+                "429" in error_message
+                or "quota" in error_message.lower()
+            ):
+                rate_limited += 1
+
+                print()
+                print(
+                    "Rate limit detected. "
+                    "Question skipped without retry."
+                )
+
+            else:
+                generation_errors += 1
 
     # =====================================================
     # FINAL RESULTS
@@ -211,6 +230,16 @@ def main():
         f"Valid citations : "
         f"{valid_citations}/{total_questions} "
         f"({valid_citations / total_questions:.2%})"
+    )
+
+    print(
+        f"Rate-limited questions : "
+        f"{rate_limited}/{total_questions}"
+    )
+
+    print(
+        f"Other generation errors : "
+        f"{generation_errors}/{total_questions}"
     )
 
     print()
