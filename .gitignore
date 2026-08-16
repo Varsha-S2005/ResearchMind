@@ -34,3 +34,4 @@ Thumbs.db
 # ChromaDB runtime data
 data/chroma/
 data/test_chroma/
+frontend/node_modules/
