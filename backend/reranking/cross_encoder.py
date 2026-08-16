@@ -7,12 +7,9 @@ class CrossEncoderReranker:
 
     Hybrid retrieval first produces a candidate pool.
 
-    The cross-encoder is intentionally applied only to the
-    top `rerank_k` hybrid candidates. This prevents noisy
-    low-ranked candidates from jumping directly into the
-    final Top-K.
-
-    Hybrid and cross-encoder rankings are combined using RRF.
+    The cross-encoder reranks the strongest hybrid candidates.
+    Hybrid and cross-encoder rankings are combined using
+    Reciprocal Rank Fusion (RRF).
     """
 
     def __init__(
@@ -24,8 +21,6 @@ class CrossEncoderReranker:
         self.model = CrossEncoder(model_name)
 
         self.rrf_k = rrf_k
-
-        # Only rerank the strongest hybrid candidates.
         self.rerank_k = rerank_k
 
     def rerank(
@@ -38,15 +33,7 @@ class CrossEncoderReranker:
         if not results:
             return []
 
-        # -------------------------------------------------
-        # 1. Keep only the top hybrid candidates
-        # -------------------------------------------------
-
         candidates = results[:self.rerank_k]
-
-        # -------------------------------------------------
-        # 2. Prepare query-document pairs
-        # -------------------------------------------------
 
         pairs = [
             [
@@ -56,17 +43,9 @@ class CrossEncoderReranker:
             for result in candidates
         ]
 
-        # -------------------------------------------------
-        # 3. Cross-encoder prediction
-        # -------------------------------------------------
-
         cross_scores = self.model.predict(
             pairs
         )
-
-        # -------------------------------------------------
-        # 4. Cross-encoder ranking
-        # -------------------------------------------------
 
         cross_ranked_indices = sorted(
             range(len(candidates)),
@@ -84,25 +63,12 @@ class CrossEncoderReranker:
         ):
             cross_ranks[index] = rank
 
-        # -------------------------------------------------
-        # 5. Hybrid ranking
-        #
-        # Since candidates are results[:rerank_k],
-        # their positions already represent their
-        # original hybrid ranking.
-        # -------------------------------------------------
-
         reranked = []
 
         for index, result in enumerate(candidates):
 
             hybrid_rank = index + 1
-
             cross_rank = cross_ranks[index]
-
-            # -------------------------------------------------
-            # RRF
-            # -------------------------------------------------
 
             hybrid_rrf = (
                 1.0 /
@@ -121,8 +87,8 @@ class CrossEncoderReranker:
             )
 
             combined_score = (
-                hybrid_rrf +
-                cross_rrf
+                0.7 * hybrid_rrf +
+                0.3 * cross_rrf
             )
 
             reranked.append({
@@ -148,17 +114,9 @@ class CrossEncoderReranker:
                 )
             })
 
-        # -------------------------------------------------
-        # 6. Sort using RRF score
-        # -------------------------------------------------
-
         reranked.sort(
             key=lambda result: result["score"],
             reverse=True
         )
-
-        # -------------------------------------------------
-        # 7. Return final Top-K
-        # -------------------------------------------------
 
         return reranked[:top_k]
