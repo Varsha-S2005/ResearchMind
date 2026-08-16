@@ -21,9 +21,11 @@ class BM25Retriever:
             for chunk in chunks
         ]
 
-        # Build BM25 index
-        self.bm25 = BM25Okapi(
-            tokenized_chunks
+        # BM25 cannot be initialized with an empty corpus.
+        self.bm25 = (
+            BM25Okapi(tokenized_chunks)
+            if tokenized_chunks
+            else None
         )
 
     @staticmethod
@@ -48,7 +50,7 @@ class BM25Retriever:
         text = text.replace("–", "-")
         text = text.replace("—", "-")
         text = text.replace("/", " ")
-        
+
         # Keep letters, numbers and hyphens.
         text = re.sub(
             r"[^a-z0-9\-]+",
@@ -76,7 +78,7 @@ class BM25Retriever:
         Return the top-k chunks ranked by BM25 score.
         """
 
-        if not self.chunks:
+        if not self.chunks or self.bm25 is None:
             return []
 
         # Tokenize query using the same preprocessing

@@ -1,0 +1,16 @@
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.git/
+.github/
+.vscode/
+.env
+data/chroma/
+data/test_chroma/
+data/uploads/
+models/
+logs/
+*.log
+.DS_Store
+Thumbs.db
