@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from backend.verification.grounding_critic import GroundingCritic
 from backend.ingestion.pdf_parser import extract_text_from_pdf
 from backend.chunking.text_chunker import chunk_pages
 
@@ -35,6 +36,8 @@ class RAGService:
         self.reranker = CrossEncoderReranker()
 
         self.llm = GeminiLLM()
+
+        self.grounding_critic = GroundingCritic()
 
         # -------------------------------------------------
         # Load existing chunks from ChromaDB
@@ -115,7 +118,8 @@ class RAGService:
         self.pipeline = RAGPipeline(
             retriever=self.retriever,
             reranker=self.reranker,
-            llm=self.llm
+            llm=self.llm,
+            grounding_critic=self.grounding_critic
         )
 
     # =====================================================

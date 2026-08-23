@@ -5,13 +5,21 @@ from backend.generation.prompt_builder import PromptBuilder
 class RAGPipeline:
     """
     Coordinates retrieval, reranking, context construction,
-    prompt construction, and LLM generation.
+    prompt construction, LLM generation, and grounding verification.
 
-    Retrieval and final answer size are intentionally separated:
+    Pipeline:
 
-        Hybrid retrieval -> 40 candidates
-        Cross-encoder reranking -> rank candidates
-        Final top-k -> context + LLM
+        Hybrid retrieval
+            ↓
+        Cross-encoder reranking
+            ↓
+        Context construction
+            ↓
+        Gemini answer generation
+            ↓
+        Grounding critic verification
+            ↓
+        Final response
     """
 
     def __init__(
@@ -19,11 +27,13 @@ class RAGPipeline:
         retriever,
         reranker,
         llm,
+        grounding_critic,
         retrieval_k: int = 40
     ):
         self.retriever = retriever
         self.reranker = reranker
         self.llm = llm
+        self.grounding_critic = grounding_critic
 
         self.retrieval_k = retrieval_k
 
@@ -36,15 +46,8 @@ class RAGPipeline:
         top_k: int = 5
     ) -> dict:
         """
-        Generate a grounded answer.
-
-        Pipeline:
-
-        1. Retrieve a larger candidate pool.
-        2. Rerank the candidates.
-        3. Keep only the final top_k results.
-        4. Build context.
-        5. Generate answer.
+        Generate an answer and verify its grounding
+        against the retrieved research evidence.
         """
 
         # -------------------------------------------------
@@ -92,7 +95,22 @@ class RAGPipeline:
         )
 
         # -------------------------------------------------
-        # 6. Build source information
+        # 6. Grounding verification
+        # -------------------------------------------------
+
+        critic_chunks = [
+            result["chunk"]
+            for result in reranked_results
+        ]
+
+        verification = self.grounding_critic.verify(
+            question=question,
+            answer=answer,
+            chunks=critic_chunks
+        )
+
+        # -------------------------------------------------
+        # 7. Build source information
         # -------------------------------------------------
 
         sources = []
@@ -110,11 +128,12 @@ class RAGPipeline:
             })
 
         # -------------------------------------------------
-        # 7. Return final result
+        # 8. Return final result
         # -------------------------------------------------
 
         return {
             "question": question,
             "answer": answer,
-            "sources": sources
+            "sources": sources,
+            "verification": verification
         }
